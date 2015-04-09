@@ -8,6 +8,8 @@
 [s-tajima](https://github.com/s-tajima/SICP)
 [takkyuplayer](https://github.com/takkyuuplayer/sicp)
 [arata](https://github.com/tarata/sicp)
+[suzuken](https://github.com/suzuken/sicp)
+[monmon](https://github.com/monmon/sicp)
 
 # about directory
 * memo
