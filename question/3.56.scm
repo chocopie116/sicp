@@ -36,10 +36,26 @@
 
 ;(stream-print merged)
 ;1,2,3,4,5,6,7,8,
-(print (stream-ref merged-odd-even 0));1
-(print (stream-ref merged-odd-even 2));3
-(print (stream-ref merged-odd-even 3));4
+;(print (stream-ref merged-odd-even 0));1
+;(print (stream-ref merged-odd-even 2));3
+;(print (stream-ref merged-odd-even 3));4
 ;--------------------
 ;mergeの動作テスト
 ;--------------------
 
+(define S (cons-stream 1 (merge
+			   (merge
+			     (scale-stream S 2)
+			     (scale-stream S 3)
+			     )
+			   (scale-stream S 5)
+			   )))
+
+(print (stream-ref S 0));1
+(print (stream-ref S 1));2
+(print (stream-ref S 2));3
+(print (stream-ref S 3));4
+(print (stream-ref S 4));5
+(print (stream-ref S 5));6
+(print (stream-ref S 6));8
+(print (stream-ref S 7));9
