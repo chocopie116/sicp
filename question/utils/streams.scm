@@ -92,3 +92,15 @@
         (display " ")
         (display (stream-car s))
         (show-stream (stream-cdr s) (- n 1)))))
+
+
+;先頭n番目まで出力する
+(define (stream-head s n)
+  (define (iter s n)
+    (if (<= n 0)
+      'done
+      (begin
+        (display (stream-car s))
+        (display ", ")
+        (iter (stream-cdr s) (- n 1)))))
+  (iter s n))
