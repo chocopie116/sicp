@@ -104,3 +104,6 @@
         (display ", ")
         (iter (stream-cdr s) (- n 1)))))
   (iter s n))
+
+(define (add-streams s1 s2)
+(stream-map + s1 s2))
