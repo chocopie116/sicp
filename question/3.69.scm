@@ -28,7 +28,7 @@
     (list (stream-car s) (stream-car t) (stream-car u))
     (interleave
       (stream-map (lambda (x) (cons (stream-car s) x))
-                  (pairs (stream-cdr t)(stream-cdr u)))
+                  (pairs t (stream-cdr u)))
       (triples (stream-cdr s) (stream-cdr t) (stream-cdr u))
       )
     )
@@ -38,12 +38,11 @@
   (* x x)
   )
 
-  (define pythagoras
-    (stream-filter (lambda (x)
-                    (= (+ (square (car x)) (square (cadr x))) (square (caddr x)))
-                     )
-                   (triples integers integers integers))
-    )
+(define pythagoras (stream-filter (lambda (x)
+                                    (= (+ (square (car x)) (square (cadr x))) (square (caddr x)))
+                                    )
+                                  (triples integers integers integers))
+  )
 
-;(stream-head (triples integers integers integers) 10)
+(stream-head (triples integers integers integers) 10)
 (stream-head pythagoras 3)
