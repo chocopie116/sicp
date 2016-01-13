@@ -107,3 +107,9 @@
 
 (define (add-streams s1 s2)
 (stream-map + s1 s2))
+
+
+;よく使うので定義
+(define ones (cons-stream 1 ones))
+;自然数のストリーム
+(define integers (cons-stream 1 (add-streams ones integers)))
