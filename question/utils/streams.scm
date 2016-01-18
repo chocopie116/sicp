@@ -113,3 +113,9 @@
 (define ones (cons-stream 1 ones))
 ;自然数のストリーム
 (define integers (cons-stream 1 (add-streams ones integers)))
+
+
+
+  ;; stream の各項に対して factor を掛けたストリーム。
+(define (scale-stream stream factor)
+  (stream-map (lambda (x) (* x factor)) stream))
