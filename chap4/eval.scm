@@ -1,64 +1,65 @@
-;quoted from http://www.serendip.ws/archives/1817
-
-;; 基盤の apply への参照を apply-in-underlying-scheme へ退避させる（こうすることで、基盤の apply に apply-in-underlying-scheme という名前でアクセスできる）。
 (define apply-in-underlying-scheme apply)
 
-;;;; apply の定義
-(define (apply procedure arguments)
-  (cond ((primitive-procedure? procedure)
-         (apply-primitive-procedure procedure arguments))
-        ((compound-procedure? procedure)
-         (eval-sequence
-           (procedure-body procedure)
-           (extend-environment
-             (procedure-parameters procedure)
-             arguments
-             (procedure-environment procedure))))
-        (else
-          (error
-            "Unknown procedure type -- APPLY" procedure))))
 
-;;;; eval の定義
+;; EVAL
 (define (eval exp env)
   (cond ((self-evaluating? exp) exp)
         ((variable? exp) (lookup-variable-value exp env))
         ((quoted? exp) (text-of-quotation exp))
         ((assignment? exp) (eval-assignment exp env))
         ((definition? exp) (eval-definition exp env))
+        ((and? exp) (eval-and exp env))
+        ((or? exp) (eval-or exp env))
         ((if? exp) (eval-if exp env))
         ((lambda? exp)
-         (make-procedure (lambda-parameters exp)
-                         (lambda-body exp)
-                         env))
+          (make-procedure (lambda-parameters exp) (lambda-body exp) env))
         ((begin? exp)
-         (eval-sequence (begin-actions exp) env))
+          (eval-sequence (begin-actions exp) env))
         ((cond? exp) (eval (cond->if exp) env))
+        ((let? exp) (eval (let->derived exp) env))
+        ((let*? exp) (eval (let*->nested-lets exp) env))
+        ((while? exp) (eval (while->derived exp) env))
+        ((until? exp) (eval (until->derived exp) env))
+        ((do? exp) (eval (do->derived exp) env))
         ((application? exp)
-         (apply (eval (operator exp) env)
-                (list-of-values (operands exp) env)))
+          (apply-new (eval (operator exp) env)
+                 (list-of-values (operands exp) env)))
         (else
           (error "Unknown expression type -- EVAL" exp))))
 
-;;;; 手続きの引数
-(define (list-of-values exps env)
-  (if (no-operands? exps)
-      '()
-      (cons (eval (first-operand exps) env)
-            (list-of-values (rest-operands exps) env))))
+;; APPLY
+(define (apply-new procedure arguments)
+  (cond ((primitive-procedure? procedure)
+          (apply-primitave-procedure procedure arguments))
+        ((compound-procedure? procedure)
+          (eval-sequence
+            (procedure-body procedure)
+            (extend-environment
+              (procedure-parameters procedure)
+              arguments
+              (procedure-environment procedure))))
+        (else (error "Unknown procedure type -- APPLY-NEW" procedure))))
 
-;;;; 条件式
+;; Procedure Functions
+(define (list-of-values exp env)
+  (if (no-operands? exp)
+    '()
+    (cons (eval (first-operand exp) env)
+          (list-of-values (rest-operands exp) env))))
+
+;; Conditionals
 (define (eval-if exp env)
   (if (true? (eval (if-predicate exp) env))
-      (eval (if-consequent exp) env)
-      (eval (if-alternative exp) env)))
+    (eval (if-consequent exp) env)
+    (eval (if-alternative exp) env)))
 
-;;;; 並び
+;; Sequences
 (define (eval-sequence exps env)
   (cond ((last-exp? exps) (eval (first-exp exps) env))
         (else (eval (first-exp exps) env)
-              (eval-sequence (rest-exps exps) env))))
+               (eval-sequence (rest-exps exps) env))))
 
-;;;; 代入と定義
+;; Assignment and Definition
 (define (eval-assignment exp env)
   (set-variable-value! (assignment-variable exp)
                        (eval (assignment-value exp) env)
@@ -71,18 +72,16 @@
                     env)
   'ok)
 
-;;;; 4.1.2 式の表現
-
-;;;; 自己評価式は数と文字だけ
+;; Expression Predicates
 (define (self-evaluating? exp)
   (cond ((number? exp) #t)
         ((string? exp) #t)
+        ((boolean? exp) #t) ; not in book, but needed for now...
+        ((and (symbol? exp) (eq? exp '*unassigned*))) ; otherwise we try to treat this as a variable...
         (else #f)))
 
-;;;; 変数は記号で表現
 (define (variable? exp) (symbol? exp))
 
-;;;; クォート式は (quote <text-of-quotation>) の形
 (define (quoted? exp)
   (tagged-list? exp 'quote))
 
@@ -90,66 +89,51 @@
 
 (define (tagged-list? exp tag)
   (if (pair? exp)
-      (eq? (car exp) tag)
-      #f))
+    (eq? (car exp) tag)
+    #f))
 
-;;;; 代入は (set! <var> <value>) の形
 (define (assignment? exp)
   (tagged-list? exp 'set!))
-
 (define (assignment-variable exp) (cadr exp))
-
 (define (assignment-value exp) (caddr exp))
 
-;;;; 定義
 (define (definition? exp)
   (tagged-list? exp 'define))
 
 (define (definition-variable exp)
   (if (symbol? (cadr exp))
-      (cadr exp)
-      (caadr exp)))
+    (cadr exp)    ; (define var exp)
+    (caadr exp))) ; (define (proc a1 a1) body)
 
 (define (definition-value exp)
   (if (symbol? (cadr exp))
-      (caddr exp)
-      (make-lambda (cdadr exp)      ; 仮パラメタ
-                   (cddr exp))))    ; 本体
+    (caddr exp)
+    (make-lambda (cdadr exp)   ; parameters
+                 (cddr exp)))) ; body
 
-;;;; lambda 式は記号 lambda で始まるリスト
+(define (make-define var value)
+  (cons 'define (cons var value)))
+
 (define (lambda? exp) (tagged-list? exp 'lambda))
-
 (define (lambda-parameters exp) (cadr exp))
-
 (define (lambda-body exp) (cddr exp))
-
 (define (make-lambda parameters body)
-  (cons 'lambda (cons parameters body)))
+  (cons 'lambda (cons parameters body))) ; '(lambda (parameters...) exp1 exp2...)
 
-;;;; 条件式
 (define (if? exp) (tagged-list? exp 'if))
-
 (define (if-predicate exp) (cadr exp))
-
 (define (if-consequent exp) (caddr exp))
-
 (define (if-alternative exp)
-  (if (not (null? (cdddr exp)))
-      (cadddr exp)
-      #f))
-
+  (if (not (null? exp))
+    (cadddr exp)
+    'false))
 (define (make-if predicate consequent alternative)
   (list 'if predicate consequent alternative))
 
-;;;; begin
 (define (begin? exp) (tagged-list? exp 'begin))
-
 (define (begin-actions exp) (cdr exp))
-
 (define (last-exp? seq) (null? (cdr seq)))
-
 (define (first-exp seq) (car seq))
-
 (define (rest-exps seq) (cdr seq))
 
 (define (sequence->exp seq)
@@ -159,184 +143,329 @@
 
 (define (make-begin seq) (cons 'begin seq))
 
-;;;; 手続き作用
+
 (define (application? exp) (pair? exp))
-
 (define (operator exp) (car exp))
-
 (define (operands exp) (cdr exp))
-
 (define (no-operands? ops) (null? ops))
-
 (define (first-operand ops) (car ops))
-
 (define (rest-operands ops) (cdr ops))
 
-;;;; cond 式
+; Derived Expressions
 (define (cond? exp) (tagged-list? exp 'cond))
-
 (define (cond-clauses exp) (cdr exp))
-
 (define (cond-else-clause? clause)
   (eq? (cond-predicate clause) 'else))
-
 (define (cond-predicate clause) (car clause))
-
 (define (cond-actions clause) (cdr clause))
+
+(define (cond-map? clause)
+  (eq? (cadr clause) '=>))
+(define (cond-map-procedure clause)
+  (caddr clause)) ; grab 3rd elem in clause
 
 (define (cond->if exp)
   (expand-clauses (cond-clauses exp)))
 
 (define (expand-clauses clauses)
   (if (null? clauses)
-      #f
-      (let ((first (car clauses))
-            (rest (cdr clauses)))
-           (if (cond-else-clause? first)
-               (if (null? rest)
+    'false
+    (let ((first (car clauses))
+          (rest (cdr clauses)))
+      (if (cond-else-clause? first)
+        (if (null? rest)
+          (sequence->exp (cond-actions first))
+          (error "ELSE clause isn't last -- COND->IF" clauses))
+        (if (cond-map? first)
+          (list
+            (make-lambda
+              (list 'predicate-value)
+              (list
+                (make-if 'predicate-value
+                  (list (cond-map-procedure first) 'predicate-value)
+                  (expand-clauses rest))))
+            (cond-predicate first))
+          (make-if (cond-predicate first)
                    (sequence->exp (cond-actions first))
-                   (error "ELSE clause isn't last -- COND->IF"
-                          clauses))
-               (make-if (cond-predicate first)
-                        (sequence->exp (cond-actions first))
-                        (expand-clauses rest))))))
+                   (expand-clauses rest)))))))
 
-;;;; 4.1.3 評価器のデータ構造
+; Let
+(define (let? exp) (tagged-list? exp 'let))
+; (define (let-bindings exp) (cadr exp))
+; (define (let-body exp) (cddr exp))
+(define (named-let? exp)
+(not (pair? (cadr exp))))
 
-;;;; 述語のテスト
-(define (true? x)
-  (not (eq? x #f)))
+(define (let-bindings exp)
+  (if (named-let? exp)
+    (caddr exp)
+    (cadr exp)))
+(define (let-body exp)
+  (if (named-let? exp)
+    (cdddr exp)
+    (cddr exp)))
 
-(define (false? x)
-  (eq? x #f))
+(define (let->derived exp)
+  (if (named-let? exp)
+    (let->combination exp)
+    (let->lambda exp)))
 
-;;;; 手続きの表現
+(define (let->lambda exp)
+  (cons   ; use cons so args are not nested: ((lambda (param1 param2) body1 body2) arg1 arg2)
+    (make-lambda
+      (map car (let-bindings exp))
+      (let-body exp))
+    (map cadr (let-bindings exp))))
+
+
+(define (let*? exp) (tagged-list? exp 'let*))
+(define (make-let bindings body)
+  (cons 'let (cons bindings body))) ;('let ((param1 val1) (param2 val2) ...) exp1 exp2 ...)
+
+(define (let*->nested-lets exp)
+  (make-let
+    (list (car (let-bindings exp)))
+    (if (null? (cdr (let-bindings exp)))
+      (let-body exp)
+      (list (let*->nested-lets
+        (cons 'let*
+              (cons (cdr (let-bindings exp))
+                    (let-body exp))))))))
+
+(define (let->combination exp)
+  (define (parameters exp)
+    (map car (let-bindings exp)))
+  (define (initial-argurments exp)
+    (map cadr (let-bindings exp)))
+  (let ((proc-name (cadr exp)))
+    (make-begin
+      (list  ; define procedure for named let and then call that procedure
+        (make-define
+          (cons proc-name (parameters exp))  ; (procname p1 p2 p3)
+          (let-body exp))
+        (cons proc-name (initial-argurments exp))))))
+
+
+(define (while? exp) (tagged-list? exp 'while))
+(define (while->derived exp)
+  (define (while-condition exp) (cadr exp))
+  (define (while-body exp) (cddr exp))
+  (make-begin
+    (list
+      ; 1. define our loop
+      (make-define '(loop)
+        (list
+          (make-if (while-condition exp)
+            (make-begin
+              (list
+                (make-begin (while-body exp))
+                '(loop))) ; recursively call our loop
+                "done")))
+      ; 2. enter our loop
+      '(loop))))
+
+; Until
+(define (until? exp) (tagged-list? exp 'until))
+(define (until->derived exp)
+  (define (until-condition exp) (cadr exp))
+  (define (until-body exp) (cddr exp))
+  (while->derived (cons 'while (cons
+    (list 'not (until-condition exp)) ; wrap the condition in a not
+    (until-body exp)))))
+
+; Do-while
+(define (do? exp) (tagged-list? exp 'do))
+(define (do->derived exp)
+  (define (do-condition exp) (cadr exp))
+  (define (do-body exp) (cddr exp))
+  (make-begin (list
+    ; 1. define our loop
+    (make-define '(loop) (list
+      (make-begin (do-body exp))
+      (make-if (do-condition exp)
+        '(loop) ; recursively call our loop
+        "done")))
+    ; 2. enter our loop
+    '(loop))))
+
+
+;; Testing Predicates
+(define (true? val) (not (false? val)))
+(define (false? val) (eq? val #f))
+
+;; Operators
+(define (and? exp) (tagged-list? exp 'and))
+(define (eval-and exp env)
+  (define (expand-and exp)
+    (let ((first (eval (car exp) env)))
+      (if (not (true? first))
+        (eval 'false env)
+        (if (null? (cdr exp))
+          first
+          (expand-and (cdr exp))))))
+  (if (null? (cdr exp))
+    (eval 'true env)   ; no expressions => true
+    (expand-and (cdr exp))))
+
+
+(define (or? exp) (tagged-list? exp 'or))
+(define (eval-or exp env)
+  (define (expand-or exp)
+    (if (null? exp)
+      (eval 'false env)
+      (let ((first (eval (car exp) env)))
+        (if (true? first)
+          first
+          (expand-or (cdr exp))))))
+  (expand-or (cdr exp)))
+
+;; Evaluator Data Structures
 (define (make-procedure parameters body env)
-  (list 'procedure parameters body env))
-
-(define (compound-procedure? p)
-  (tagged-list? p 'procedure))
-
+  (list 'procedure parameters (scan-out-defines body) env))
+(define (compound-procedure? p) (tagged-list? p 'procedure))
 (define (procedure-parameters p) (cadr p))
-
 (define (procedure-body p) (caddr p))
-
 (define (procedure-environment p) (cadddr p))
 
-;;;; 環境に対する操作
+; simultaneous variable assignment
+(define (scan-out-defines body)
+  (let ; split out define statements and the non-definition statements
+    ((define-statements (filter definition? body))
+     (body-statements (filter (lambda (s) (not (definition? s))) body)))
+
+     (if (null? define-statements)
+       body ; if there are no define-statements, just use the original body
+
+       (let ; get the definition variables and expressions
+        ((variables (map definition-variable define-statements))
+         (expressions (map definition-value define-statements)))
+         (let ((
+           ret (make-let
+             (map (lambda (v) (list v '*unassigned*)) variables) ; bindings
+               (append ; body: set!s for variable assignment and then the rest of the body
+                 (map (lambda (s) (cons 'set! s)) (zip variables expressions))
+                 body-statements))))
+                 (list ret))) ; receives a list of expressions, and so must return a list of expressions
+           )))
+
+; Environment Procedures
 (define (enclosing-environment env) (cdr env))
-
 (define (first-frame env) (car env))
-
 (define the-empty-environment '())
 
 (define (make-frame variables values)
   (cons variables values))
-
 (define (frame-variables frame) (car frame))
-
 (define (frame-values frame) (cdr frame))
-
 (define (add-binding-to-frame! var val frame)
   (set-car! frame (cons var (car frame)))
   (set-cdr! frame (cons val (cdr frame))))
 
 (define (extend-environment vars vals base-env)
   (if (= (length vars) (length vals))
-      (cons (make-frame vars vals) base-env)
-      (if (< (length vars) (length vals))
-          (error "Too many arguments supplied" vars vals)
-          (error "Too few arguments supplied" vars vals))))
+    (cons (make-frame vars vals) base-env)
+    (if (< (length vars) (length vals))
+        (error "Too many arguments supplied" vars vals)
+        (error "Too few arguments supplied" vars vals))))
 
-(define (lookup-variable-value var env)
+(define (lookup-variable-value var base-env)
   (define (env-loop env)
     (define (scan vars vals)
-      (cond ((null? vars)
-             (env-loop (enclosing-environment env)))
-            ((eq? var (car vars))
-             (car vals))
-            (else (scan (cdr vars) (cdr vals)))))
+      (cond
+        ((null? vars)
+          (env-loop (enclosing-environment env)))
+        ((eq? var (car vars))
+          (if (eq? (car vals) '*unassigned*)
+            (error "Variable accessed before it has been defined" var)
+            (car vals)))
+        (else (scan (cdr vars) (cdr vals)))))
     (if (eq? env the-empty-environment)
-        (error "Unbound variable" var)
+        (error "Unbound variable -- LOOKUP" var)
         (let ((frame (first-frame env)))
-             (scan (frame-variables frame)
-                   (frame-values frame)))))
-  (env-loop env))
+          (scan (frame-variables frame)
+                (frame-values frame)))))
+  (env-loop base-env))
 
 (define (set-variable-value! var val env)
   (define (env-loop env)
     (define (scan vars vals)
       (cond ((null? vars)
-             (env-loop (enclosing-environment env)))
-            ((eq? var (car vars))
-             (set-car! vals val))
+              (env-loop (enclosing-environment env)))
+            ((eq? (car vars) var) (set-car! vals val))
             (else (scan (cdr vars) (cdr vals)))))
     (if (eq? env the-empty-environment)
-        (error "Unbound variable -- SET!" var)
-        (let ((frame (first-frame env)))
-             (scan (frame-variables frame)
-                   (frame-values frame)))))
+      (error "Unbound variable -- SET!" var)
+      (let ((frame (first-frame env)))
+        (scan (frame-variables frame)
+              (frame-values frame)))))
   (env-loop env))
 
 (define (define-variable! var val env)
   (let ((frame (first-frame env)))
-       (define (scan vars vals)
-         (cond ((null? vars)
-                (add-binding-to-frame! var val frame))
-               ((eq? var (car vars))
-                (set-car! vals val))
-               (else (scan (cdr vars) (cdr vals)))))
-       (scan (frame-variables frame)
-             (frame-values frame))))
+    (define (scan vars vals)
+      (cond ((null? vars)
+              (add-binding-to-frame! var val frame))
+            ((eq? var (car vars))
+              (set-car! vals val))
+            (else (scan (cdr vars) (cdr vals)))))
+    (scan (frame-variables frame)
+          (frame-values frame))))
 
-;;;; 4.1.4 評価器をプログラムとして走らせる
+
+;; Environment Setup
 (define primitive-procedures
   (list (list 'car car)
         (list 'cdr cdr)
         (list 'cons cons)
+        (list 'list list)
         (list 'null? null?)
-        ;; 基本手続きが続く
+        (list 'not not)
+        (list '= =)
+        (list '< <)
+        (list '> >)
+        (list '+ +)
+        (list '- -)
+        (list '* *)
+        (list 'symbol? symbol?)
+        (list 'display display)
+        (list 'newline newline)
+        ; ... we can add more
         ))
-
 (define (primitive-procedure-names)
-  (map car
-       primitive-procedures))
-
+  (map car primitive-procedures))
 (define (primitive-procedure-objects)
-  (map (lambda (proc) (list 'primitive (cadr proc)))
-       primitive-procedures))
+  (map
+    (lambda (proc) (list 'primitive (cadr proc)))
+    primitive-procedures))
 
 (define (setup-environment)
   (let ((initial-env
-          (extend-environment (primitive-procedure-names)
-                              (primitive-procedure-objects)
-                              the-empty-environment)))
-       (define-variable! 'true #t initial-env)
-       (define-variable! 'false #f initial-env)
-       initial-env))
+         (extend-environment
+           (primitive-procedure-names)
+           (primitive-procedure-objects)
+           the-empty-environment)))
+    (define-variable! 'true #t initial-env)
+    (define-variable! 'false #f initial-env)
+    initial-env))
 
 (define the-global-environment (setup-environment))
 
 (define (primitive-procedure? proc)
   (tagged-list? proc 'primitive))
-
 (define (primitive-implementation proc) (cadr proc))
 
-(define (apply-primitive-procedure proc args)
-  (apply-in-underlying-scheme
-    (primitive-implementation proc) args))
+(define (apply-primitave-procedure proc args)
+  (apply-in-underlying-scheme (primitive-implementation proc) args))
 
-
-;;;; 基盤の Lisp システムの"読み込み-評価-印字"ループをモデル化する"駆動ループ(driver loop)"を用意する。
-(define input-prompt ";;; M-Eval input:")
-(define output-prompt ";;; M-Eval value:")
+(define input-prompt ";;; M-Eval input: ")
+(define output-prompt ";;; M-Eval value: ")
 
 (define (driver-loop)
   (prompt-for-input input-prompt)
   (let ((input (read)))
-       (let ((output (eval input the-global-environment)))
-            (announce-output output-prompt)
-            (user-print output)))
+    (let ((output (eval input the-global-environment)))
+      (announce-output output-prompt)
+      (user-print output)))
   (driver-loop))
 
 (define (prompt-for-input string)
@@ -347,8 +476,11 @@
 
 (define (user-print object)
   (if (compound-procedure? object)
-      (display (list 'compound-procedure
-                     (procedure-parameters object)
-                     (procedure-body object)
-                     '<procedure-env>))
-      (display object)))
+    (display (list 'compound-procedure
+                   (procedure-parameters object)
+                   (procedure-body object)
+                   '<procedure-env>))
+    (display object)))
+
+(define evaluator driver-loop)
+

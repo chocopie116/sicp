@@ -1,6 +1,4 @@
-(use slib)
-(require 'trace)
 
-(load "./tajima_eval.scm")
+(load "./eval.scm")
 
-(trace (evaluator))
+(evaluator)
