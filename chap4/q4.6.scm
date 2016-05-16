@@ -1,4 +1,1 @@
 
-(load "./eval.scm")
-
-(evaluator)
