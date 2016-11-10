@@ -1,5 +1,6 @@
 (load "./machine")
 
+;machine.scmのmake-stackを上書き
 (define (make-stack)
   (let ((s '())
         (number-pushes 0)
